@@ -10,10 +10,19 @@ namespace veng {
         ~Graphics();
 
         private:
+
+        struct QueueFamilyIndices {
+            std::optional<uint32_t> graphics_family = std::nullopt;
+            std::optional<uint32_t> presentation_family = std::nullopt;
+
+            bool IsValid() const {return graphics_family.has_value() /*&& presentation_family.has_value()*/;}
+        };
+
         void InitializeVulkan();
         void CreateInstance();
         void SetupDebugMessenger();
         void PickPhysicalDevice();
+        void CreateLogicalDeviceAndQueues();
         std::vector<gsl::czstring> GetRequiredInstanceExtensions();
 
         static gsl::span<gsl::czstring> GetSuggestedInstanceExtensions();
@@ -23,12 +32,18 @@ namespace veng {
         static std::vector<VkLayerProperties> GetSupportedValidatedLayers();
         static bool AreAllLayersSupported(gsl::span<gsl::czstring> layers);
 
+        QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device);
+
         bool IsDeviceSuitable(VkPhysicalDevice device);
         std::vector<VkPhysicalDevice> GetAvailableDevices();
 
         VkInstance instance_ = nullptr;
+        VkDebugUtilsMessengerEXT debug_messenger_ = nullptr;
+
         VkPhysicalDevice physical_device_ = nullptr;
-        VkDebugUtilsMessengerEXT debug_messenger_;
+        VkDevice logical_device_ = nullptr;
+        VkQueue graphics_queue_ = nullptr;
+
         gsl::not_null<Window*> window_;
         bool validation_enabled_ = false;
     };
