@@ -3,6 +3,7 @@ project(VulkanCourseEngine)
 
 find_package(Vulkan REQUIRED)
 
+include(cmake/Shaders.cmake)
 include(FetchContent)
 
 FetchContent_Declare(
@@ -55,8 +56,16 @@ add_executable(VulkanCourseEngine ${VulkanEngineSources}
 
 target_link_libraries(VulkanCourseEngine PRIVATE Vulkan::Vulkan glm glfw Microsoft.GSL::GSL spdlog)
 
-target_include_directories(VulkanCourseEngine PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_include_directories(VulkanCourseEngine PRIVATE "src")
 
 target_compile_features(VulkanCourseEngine PRIVATE cxx_std_20)
 
-target_precompile_headers(VulkanCourseEngine PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/Headers/precomp.h")
+target_precompile_headers(VulkanCourseEngine PRIVATE "src/Headers/precomp.h")
+
+file(GLOB_RECURSE ShaderSources CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/Shaders/*.vert"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/Shaders/*.frag"
+)
+
+add_shaders(VulkanEngineShaders ${ShaderSources})
+add_dependencies(VulkanCourseEngine VulkanEngineShaders)
