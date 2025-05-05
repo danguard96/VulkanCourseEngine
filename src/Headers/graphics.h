@@ -3,10 +3,14 @@
 #include <Headers/glfw_window.h>
 
 namespace veng {
-    class Graphics {
+    class Graphics final {
     public:
         Graphics(gsl::not_null<Window*> window);
         ~Graphics();
+
+        bool BeginFrame();
+        void RenderTriangle();
+        void EndFrame();
 
     private:
         struct QueueFamilyIndices {
@@ -33,6 +37,18 @@ namespace veng {
         void CreateImageViews();
         void CreateRenderPass();
         void CreateGraphicsPipeline();
+        void CreateFramebuffers();
+        void CreateCommandPool();
+        void CreateCommandBuffer();
+        void CreateSignals();
+
+        void RecreateSwapchain();
+        void CleanupSwapchain();
+
+        //Rendering
+
+        void BeginCommands();
+        void EndCommands();
 
         std::vector<gsl::czstring> GetRequiredInstanceExtensions();
 
@@ -58,6 +74,9 @@ namespace veng {
 
         VkShaderModule CreateShaderModule(gsl::span<std::uint8_t> buffer);
 
+        VkViewport GetViewport();
+        VkRect2D GetScissor();
+
         std::array<gsl::czstring, 1> required_device_extensions_{
                 VK_KHR_SWAPCHAIN_EXTENSION_NAME
             };
@@ -77,10 +96,20 @@ namespace veng {
         VkExtent2D extent_;
         std::vector<VkImage> swap_chain_images_;
         std::vector<VkImageView> swap_chain_image_views_;
+        std::vector<VkFramebuffer> swap_chain_framebuffers_;
 
         VkPipelineLayout pipeline_layout_ = VK_NULL_HANDLE;
         VkRenderPass render_pass_ = VK_NULL_HANDLE;
         VkPipeline pipeline_ = VK_NULL_HANDLE;
+
+        VkCommandPool command_pool_ = VK_NULL_HANDLE;
+        VkCommandBuffer command_buffer_ = VK_NULL_HANDLE;
+
+        VkSemaphore image_available_signal_ = VK_NULL_HANDLE;
+        VkSemaphore render_finished_signal_ = VK_NULL_HANDLE;
+        VkFence still_rendering_fence_ = VK_NULL_HANDLE;
+
+        std::uint32_t current_image_index_ = 0;
 
         gsl::not_null<Window*> window_;
         bool validation_enabled_ = false;

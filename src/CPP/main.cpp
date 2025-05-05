@@ -12,7 +12,13 @@ std::int32_t main(std::int32_t argc, gsl::czstring* argv) {
 
     veng::Graphics graphics(&window);
 
-    while (!window.ShouldClose()) { glfwPollEvents(); }
+    while (!window.ShouldClose()) {
+        glfwPollEvents();
+        if (graphics.BeginFrame()) {
+            graphics.RenderTriangle();
+            graphics.EndFrame();
+        }
+    }
 
     return EXIT_SUCCESS;
 }
