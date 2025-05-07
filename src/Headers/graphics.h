@@ -1,6 +1,8 @@
 #pragma once
-#include <vulkan/vulkan.h>
 #include <Headers/glfw_window.h>
+#include <Headers/buffer_handle.h>
+#include <Headers/vertex.h>
+#include <Headers/uniform_transformations.h>
 
 namespace veng {
     class Graphics final {
@@ -9,8 +11,15 @@ namespace veng {
         ~Graphics();
 
         bool BeginFrame();
-        void RenderTriangle();
+        void SetModelMatrix(glm::mat4 model);
+        void SetViewProjection(glm::mat4 view, glm::mat4 projection);
+        void RenderBuffer(BufferHandle handle, std::uint32_t vertex_count);
+        void RenderIndexedBuffer(BufferHandle vertex_buffer, BufferHandle index_buffer, std::uint32_t count);
         void EndFrame();
+
+        BufferHandle CreateVertexBuffer(const gsl::span<Vertex> vertices);
+        BufferHandle CreateIndexBuffer(const gsl::span<uint32_t> indices);
+        void DestroyBuffer(BufferHandle handle);
 
     private:
         struct QueueFamilyIndices {
@@ -41,6 +50,9 @@ namespace veng {
         void CreateCommandPool();
         void CreateCommandBuffer();
         void CreateSignals();
+        void CreateDescriptorSetLayout();
+        void CreateDescriptorPool();
+        void CreateDescriptorSet();
 
         void RecreateSwapchain();
         void CleanupSwapchain();
@@ -74,6 +86,13 @@ namespace veng {
 
         VkShaderModule CreateShaderModule(gsl::span<std::uint8_t> buffer);
 
+        std::uint32_t FindMemoryType(std::uint32_t type_bits_filter, VkMemoryPropertyFlags required_properties);
+
+        BufferHandle CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties);
+        VkCommandBuffer BeginTransientCommandBuffer();
+        void EndTransientCommandBuffer(VkCommandBuffer command_buffer);
+        void CreateUniformBuffers();
+
         VkViewport GetViewport();
         VkRect2D GetScissor();
 
@@ -101,6 +120,7 @@ namespace veng {
         VkPipelineLayout pipeline_layout_ = VK_NULL_HANDLE;
         VkRenderPass render_pass_ = VK_NULL_HANDLE;
         VkPipeline pipeline_ = VK_NULL_HANDLE;
+        VkDescriptorSetLayout descriptor_set_layout_ = VK_NULL_HANDLE;
 
         VkCommandPool command_pool_ = VK_NULL_HANDLE;
         VkCommandBuffer command_buffer_ = VK_NULL_HANDLE;
@@ -110,6 +130,11 @@ namespace veng {
         VkFence still_rendering_fence_ = VK_NULL_HANDLE;
 
         std::uint32_t current_image_index_ = 0;
+
+        VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
+        VkDescriptorSet descriptor_set_ = VK_NULL_HANDLE;
+        BufferHandle uniform_buffer_;
+        void* uniform_buffer_location_;
 
         gsl::not_null<Window*> window_;
         bool validation_enabled_ = false;

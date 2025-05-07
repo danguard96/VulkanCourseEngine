@@ -52,6 +52,9 @@ add_executable(VulkanCourseEngine ${VulkanEngineSources}
         src/Headers/graphics.h
         src/CPP/utilities.cpp
         src/Headers/utilities.h
+        src/Headers/vertex.h
+        src/Headers/buffer_handle.h
+        src/Headers/uniform_transformations.h
 )
 
 target_link_libraries(VulkanCourseEngine PRIVATE Vulkan::Vulkan glm glfw Microsoft.GSL::GSL spdlog)

@@ -1,7 +1,7 @@
 #include <cstring>
 #include <Headers/graphics.h>
 #include <Headers/precomp.h>
-#include "Headers/utilities.h"
+#include <Headers/utilities.h>
 
 #pragma region VK_FUNCTION_EXT_IMPL
 
@@ -530,10 +530,15 @@ namespace veng {
         viewport_info.scissorCount = 1;
         viewport_info.pScissors = &scissor;
 
+        auto vertex_binding_description = Vertex::GetBindingDescription();
+        auto vertex_attribute_description = Vertex::GetAttributeDescriptions();
+
         VkPipelineVertexInputStateCreateInfo vertex_input_info = {};
         vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertex_input_info.vertexBindingDescriptionCount = 0;
-        vertex_input_info.vertexAttributeDescriptionCount = 0;
+        vertex_input_info.vertexBindingDescriptionCount = 1;
+        vertex_input_info.pVertexBindingDescriptions = &vertex_binding_description;
+        vertex_input_info.vertexAttributeDescriptionCount = vertex_attribute_description.size();
+        vertex_input_info.pVertexAttributeDescriptions = vertex_attribute_description.data();
 
         VkPipelineInputAssemblyStateCreateInfo input_assembly_info = {};
         input_assembly_info.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -575,6 +580,18 @@ namespace veng {
 
         VkPipelineLayoutCreateInfo layout_info = {};
         layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+        VkPushConstantRange model_matrix_range = {};
+        model_matrix_range.offset = 0;
+        model_matrix_range.size = sizeof(glm::mat4);
+        model_matrix_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        layout_info.pushConstantRangeCount = 1;
+        layout_info.pPushConstantRanges = &model_matrix_range;
+
+        layout_info.setLayoutCount = 1;
+        layout_info.pSetLayouts = &descriptor_set_layout_;
+
         VkResult layout_result = vkCreatePipelineLayout(logical_device_, &layout_info, nullptr, &pipeline_layout_);
         if (layout_result != VK_SUCCESS) std::exit(EXIT_FAILURE);
 
@@ -719,10 +736,6 @@ namespace veng {
         vkCmdSetScissor(command_buffer_, 0, 1, &scissor);
     }
 
-    void Graphics::RenderTriangle() {
-        vkCmdDraw(command_buffer_, 3, 1, 0, 0);
-    }
-
     void Graphics::EndCommands() {
         vkCmdEndRenderPass(command_buffer_);
         VkResult end_buffer_result = vkEndCommandBuffer(command_buffer_);
@@ -747,6 +760,22 @@ namespace veng {
             std::exit(EXIT_FAILURE);
     }
 
+    void Graphics::CreateDescriptorSetLayout() {
+        VkDescriptorSetLayoutBinding uniform_layout_binding = {};
+        uniform_layout_binding.binding = 0;
+        uniform_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        uniform_layout_binding.descriptorCount = 1;
+        uniform_layout_binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
+
+        VkDescriptorSetLayoutCreateInfo layout_info = {};
+        layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layout_info.bindingCount = 1;
+        layout_info.pBindings = &uniform_layout_binding;
+
+        VkResult result = vkCreateDescriptorSetLayout(logical_device_, &layout_info, nullptr, &descriptor_set_layout_);
+        if (result != VK_SUCCESS) std::exit(EXIT_FAILURE);
+    }
+
     bool Graphics::BeginFrame() {
         vkWaitForFences(logical_device_, 1, &still_rendering_fence_, VK_TRUE, UINT64_MAX);
 
@@ -768,6 +797,8 @@ namespace veng {
 
         vkResetFences(logical_device_, 1, &still_rendering_fence_);
         BeginCommands();
+        SetModelMatrix(glm::mat4(1.0f));
+
         return true;
     }
 
@@ -805,7 +836,238 @@ namespace veng {
             RecreateSwapchain();
         } else if (result != VK_SUCCESS) throw std::runtime_error("Failed to present swap chain image!");
     }
+
 #pragma endregion
+
+#pragma region BUFFERS
+
+    std::uint32_t Graphics::FindMemoryType(std::uint32_t type_bits_filter, VkMemoryPropertyFlags required_properties) {
+        VkPhysicalDeviceMemoryProperties memory_properties = {};
+        vkGetPhysicalDeviceMemoryProperties(physical_device_, &memory_properties);
+        gsl::span<VkMemoryType> memory_types(memory_properties.memoryTypes,
+                                             memory_properties.memoryTypes + memory_properties.memoryTypeCount);
+
+        for (std::uint32_t i = 0; i < memory_types.size(); i++) {
+            bool passes_filter = type_bits_filter & (1 << i);
+            bool has_property_flags = memory_types[i].propertyFlags & required_properties;
+
+            if (passes_filter && has_property_flags) {
+                return i;
+            }
+        }
+
+        throw std::runtime_error("Cannot find memory type!");
+    }
+
+    BufferHandle Graphics::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) {
+        BufferHandle handle = {};
+
+        VkBufferCreateInfo buffer_info = {};
+        buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer_info.size = size;
+        buffer_info.usage = usage;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VkResult result = vkCreateBuffer(logical_device_, &buffer_info, nullptr, &handle.buffer);
+        if (result != VK_SUCCESS) throw std::runtime_error("Failed to create vertex buffer!");
+
+        VkMemoryRequirements memory_requirements = {};
+        vkGetBufferMemoryRequirements(logical_device_, handle.buffer, &memory_requirements);
+
+        std::uint32_t chosen_memory_type = FindMemoryType(memory_requirements.memoryTypeBits, properties);
+
+        VkMemoryAllocateInfo allocation_info = {};
+        allocation_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocation_info.allocationSize = memory_requirements.size;
+        allocation_info.memoryTypeIndex = chosen_memory_type;
+
+        VkResult allocation_result = vkAllocateMemory(logical_device_, &allocation_info, nullptr, &handle.memory);
+
+        if (allocation_result != VK_SUCCESS) throw std::runtime_error("Failed to allocate buffer memory!");
+
+        vkBindBufferMemory(logical_device_, handle.buffer, handle.memory, 0);
+
+        return handle;
+    }
+
+    BufferHandle Graphics::CreateIndexBuffer(gsl::span<uint32_t> indices) {
+        VkDeviceSize size = sizeof(uint32_t) * indices.size();
+        BufferHandle staging_handle = CreateBuffer(
+            size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        void* data;
+        vkMapMemory(logical_device_, staging_handle.memory, 0, size, 0, &data);
+        std::memcpy(data, indices.data(), size);
+        vkUnmapMemory(logical_device_, staging_handle.memory);
+
+        BufferHandle gpu_handle = CreateBuffer(
+            size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        VkCommandBuffer transient_commands = BeginTransientCommandBuffer();
+
+        VkBufferCopy copy_info = {};
+        copy_info.srcOffset = 0;
+        copy_info.dstOffset = 0;
+        copy_info.size = size;
+        vkCmdCopyBuffer(transient_commands, staging_handle.buffer, gpu_handle.buffer, 1, &copy_info);
+
+        EndTransientCommandBuffer(transient_commands);
+
+        DestroyBuffer(staging_handle);
+
+        return gpu_handle;
+    }
+
+    BufferHandle Graphics::CreateVertexBuffer(gsl::span<Vertex> vertices) {
+        VkDeviceSize size = sizeof(Vertex) * vertices.size();
+        BufferHandle staging_handle = CreateBuffer(
+            size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        void* data;
+        vkMapMemory(logical_device_, staging_handle.memory, 0, size, 0, &data);
+        std::memcpy(data, vertices.data(), size);
+        vkUnmapMemory(logical_device_, staging_handle.memory);
+
+        BufferHandle gpu_handle = CreateBuffer(
+            size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        VkCommandBuffer transient_commands = BeginTransientCommandBuffer();
+
+        VkBufferCopy copy_info = {};
+        copy_info.srcOffset = 0;
+        copy_info.dstOffset = 0;
+        copy_info.size = size;
+        vkCmdCopyBuffer(transient_commands, staging_handle.buffer, gpu_handle.buffer, 1, &copy_info);
+
+        EndTransientCommandBuffer(transient_commands);
+
+        DestroyBuffer(staging_handle);
+
+        return gpu_handle;
+    }
+
+    void Graphics::DestroyBuffer(BufferHandle handle) {
+        vkDeviceWaitIdle(logical_device_);
+        vkDestroyBuffer(logical_device_, handle.buffer, nullptr);
+        vkFreeMemory(logical_device_, handle.memory, nullptr);
+    }
+
+    void Graphics::RenderBuffer(BufferHandle handle, std::uint32_t vertex_count) {
+        VkDeviceSize offset = 0;
+        vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, 0, 1,
+                                &descriptor_set_, 0, nullptr);
+        vkCmdBindVertexBuffers(command_buffer_, 0, 1, &handle.buffer, &offset);
+        vkCmdDraw(command_buffer_, vertex_count, 1, 0, 0);
+        SetModelMatrix(glm::mat4(1.0f));
+    }
+
+    void Graphics::RenderIndexedBuffer(BufferHandle vertex_buffer, BufferHandle index_buffer, std::uint32_t count) {
+        VkDeviceSize offset = 0;
+        vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, 0, 1,
+                                &descriptor_set_, 0, nullptr);
+        vkCmdBindVertexBuffers(command_buffer_, 0, 1, &vertex_buffer.buffer, &offset);
+        vkCmdBindIndexBuffer(command_buffer_, index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(command_buffer_, count, 1, 0, 0, 0);
+        SetModelMatrix(glm::mat4(1.0f));
+    }
+
+    void Graphics::SetModelMatrix(glm::mat4 model) {
+        vkCmdPushConstants(command_buffer_, pipeline_layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &model);
+    }
+
+    void Graphics::SetViewProjection(glm::mat4 view, glm::mat4 projection) {
+        UniformTransformations transformations{view, projection};
+        std::memcpy(uniform_buffer_location_, &transformations, sizeof(UniformTransformations));
+    }
+
+    VkCommandBuffer Graphics::BeginTransientCommandBuffer() {
+        VkCommandBufferAllocateInfo allocation_info = {};
+        allocation_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocation_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocation_info.commandPool = command_pool_;
+        allocation_info.commandBufferCount = 1;
+
+        VkCommandBuffer buffer;
+        vkAllocateCommandBuffers(logical_device_, &allocation_info, &buffer);
+
+        VkCommandBufferBeginInfo begin_info = {};
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(buffer, &begin_info);
+
+        return buffer;
+    }
+
+    void Graphics::EndTransientCommandBuffer(VkCommandBuffer command_buffer) {
+        vkEndCommandBuffer(command_buffer);
+
+        VkSubmitInfo submit_info = {};
+        submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit_info.commandBufferCount = 1;
+        submit_info.pCommandBuffers = &command_buffer;
+
+        vkQueueSubmit(graphics_queue_, 1, &submit_info, VK_NULL_HANDLE);
+        vkQueueWaitIdle(graphics_queue_);
+        vkFreeCommandBuffers(logical_device_, command_pool_, 1, &command_buffer);
+    }
+
+    void Graphics::CreateUniformBuffers() {
+        VkDeviceSize buffer_size = sizeof(UniformTransformations);
+        uniform_buffer_ = CreateBuffer(buffer_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        vkMapMemory(logical_device_, uniform_buffer_.memory, 0, buffer_size, 0, &uniform_buffer_location_);
+    }
+
+    void Graphics::CreateDescriptorPool() {
+        VkDescriptorPoolSize pool_size = {};
+        pool_size.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        pool_size.descriptorCount = 1;
+
+        VkDescriptorPoolCreateInfo create_info = {};
+        create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        create_info.poolSizeCount = 1;
+        create_info.pPoolSizes = &pool_size;
+        create_info.maxSets = 1;
+
+        VkResult result = vkCreateDescriptorPool(logical_device_, &create_info, nullptr, &descriptor_pool_);
+        if (result != VK_SUCCESS) std::exit(EXIT_FAILURE);
+    }
+
+    void Graphics::CreateDescriptorSet() {
+        VkDescriptorSetAllocateInfo set_info = {};
+        set_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        set_info.descriptorPool = descriptor_pool_;
+        set_info.descriptorSetCount = 1;
+        set_info.pSetLayouts = &descriptor_set_layout_;
+
+        VkResult result = vkAllocateDescriptorSets(logical_device_, &set_info, &descriptor_set_);
+        if (result != VK_SUCCESS) std::exit(EXIT_FAILURE);
+
+        VkDescriptorBufferInfo buffer_info = {};
+        buffer_info.buffer = uniform_buffer_.buffer;
+        buffer_info.offset = 0;
+        buffer_info.range = sizeof(UniformTransformations);
+
+        VkWriteDescriptorSet descriptor_write = {};
+        descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptor_write.dstSet = descriptor_set_;
+        descriptor_write.dstBinding = 0;
+        descriptor_write.dstArrayElement = 0;
+        descriptor_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptor_write.descriptorCount = 1;
+        descriptor_write.pBufferInfo = &buffer_info;
+
+        vkUpdateDescriptorSets(logical_device_, 1, &descriptor_write, 0, nullptr);
+    }
+
+#pragma endregion
+
+#pragma region CLASS
 
     void Graphics::RecreateSwapchain() {
         glm::ivec2 size = window_->GetFramebufferSize();
@@ -846,7 +1108,17 @@ namespace veng {
 
     Graphics::~Graphics() {
         if (logical_device_ != VK_NULL_HANDLE) {
+            vkDeviceWaitIdle(logical_device_);
+
             CleanupSwapchain();
+
+            if (descriptor_pool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(logical_device_, descriptor_pool_, nullptr);
+
+            DestroyBuffer(uniform_buffer_);
+
+            if (descriptor_set_layout_ != VK_NULL_HANDLE)
+                vkDestroyDescriptorSetLayout(
+                    logical_device_, descriptor_set_layout_, nullptr);
 
             vkDeviceWaitIdle(logical_device_);
 
@@ -885,10 +1157,16 @@ namespace veng {
         CreateSwapchain();
         CreateImageViews();
         CreateRenderPass();
+        CreateDescriptorSetLayout();
         CreateGraphicsPipeline();
         CreateFramebuffers();
         CreateCommandPool();
         CreateCommandBuffer();
         CreateSignals();
+        CreateUniformBuffers();
+        CreateDescriptorPool();
+        CreateDescriptorSet();
     }
+
+#pragma endregion
 }
